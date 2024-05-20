@@ -79,6 +79,7 @@ typedef struct {
     size_t step;
   } data;
   struct {
+    size_t ncalled;
     uint64_t acc;
   } ack;
   struct {
@@ -113,6 +114,7 @@ static int acked_stream_data(nghttp3_conn *conn, int64_t stream_id,
   (void)stream_id;
   (void)stream_user_data;
 
+  ++ud->ack.ncalled;
   ud->ack.acc += datalen;
 
   return 0;
@@ -732,6 +734,7 @@ void test_nghttp3_conn_submit_request(void) {
 
   assert_int64(10, ==, stream_id);
   assert_ptrdiff(1, ==, sveccnt);
+  assert_uint64(1, ==, nghttp3_vec_len(vec, (size_t)sveccnt));
   assert_size(1, ==, nghttp3_ringbuf_len(&conn->tx.qdec->outq));
   assert_size(0, ==, conn->tx.qdec->outq_idx);
   assert_uint64(0, ==, conn->tx.qdec->outq_offset);
@@ -756,7 +759,7 @@ void test_nghttp3_conn_submit_request(void) {
   assert_size(0, ==, nghttp3_ringbuf_len(&conn->tx.qdec->outq));
   assert_size(0, ==, conn->tx.qdec->outq_idx);
   assert_uint64(0, ==, conn->tx.qdec->outq_offset);
-  assert_uint64(0, ==, conn->tx.qdec->ack_offset);
+  assert_uint64(1, ==, conn->tx.qdec->ack_offset);
 
   /* This will write QPACK encoder stream; just stream type */
   sveccnt = nghttp3_conn_writev_stream(conn, &stream_id, &fin, vec,
@@ -815,7 +818,7 @@ void test_nghttp3_conn_submit_request(void) {
   assert_size(0, ==, nghttp3_ringbuf_len(&stream->chunks));
   assert_size(0, ==, stream->outq_idx);
   assert_uint64(0, ==, stream->outq_offset);
-  assert_uint64(0, ==, stream->ack_offset);
+  assert_uint64(2023, ==, stream->ack_offset);
   assert_uint64(2000, ==, ud.ack.acc);
 
   nghttp3_conn_del(conn);
@@ -3740,11 +3743,13 @@ void test_nghttp3_conn_update_ack_offset(void) {
   userdata ud;
   nghttp3_data_reader dr;
   int fin;
-  uint64_t ack_total;
+  uint64_t ack_offset;
 
   memset(&callbacks, 0, sizeof(callbacks));
   memset(&ud, 0, sizeof(ud));
   nghttp3_settings_default(&settings);
+
+  callbacks.acked_stream_data = acked_stream_data;
 
   ud.data.left = 2000;
   ud.data.step = 1333;
@@ -3781,7 +3786,7 @@ void test_nghttp3_conn_update_ack_offset(void) {
   rv = nghttp3_conn_update_ack_offset(conn, 10, vec[0].len);
 
   assert_int(0, ==, rv);
-  assert_uint64(vec[0].len, ==, conn->tx.qdec->ack_total);
+  assert_uint64(vec[0].len, ==, conn->tx.qdec->ack_offset);
 
   /* This will write QPACK encoder stream; just stream type */
   sveccnt = nghttp3_conn_writev_stream(conn, &stream_id, &fin, vec,
@@ -3797,7 +3802,7 @@ void test_nghttp3_conn_update_ack_offset(void) {
   rv = nghttp3_conn_update_ack_offset(conn, 6, vec[0].len);
 
   assert_int(0, ==, rv);
-  assert_uint64(vec[0].len, ==, conn->tx.qenc->ack_total);
+  assert_uint64(vec[0].len, ==, conn->tx.qenc->ack_offset);
 
   /* This will write request stream */
   sveccnt = nghttp3_conn_writev_stream(conn, &stream_id, &fin, vec,
@@ -3814,24 +3819,23 @@ void test_nghttp3_conn_update_ack_offset(void) {
 
   stream = nghttp3_conn_find_stream(conn, 0);
 
-  ack_total = 100;
+  ack_offset = 100;
 
-  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_total);
+  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_offset);
 
   assert_int(0, ==, rv);
-  assert_uint64(ack_total, ==, stream->ack_total);
+  assert_uint64(ack_offset, ==, stream->ack_offset);
 
-  ack_total = len;
+  ack_offset = len;
 
-  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_total);
+  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_offset);
 
   assert_int(0, ==, rv);
   assert_size(0, ==, nghttp3_ringbuf_len(&stream->outq));
   assert_size(0, ==, nghttp3_ringbuf_len(&stream->chunks));
   assert_size(0, ==, stream->outq_idx);
   assert_uint64(0, ==, stream->outq_offset);
-  assert_uint64(0, ==, stream->ack_offset);
-  assert_uint64(ack_total, ==, stream->ack_total);
+  assert_uint64(ack_offset, ==, stream->ack_offset);
 
   sveccnt = nghttp3_conn_writev_stream(conn, &stream_id, &fin, vec,
                                        nghttp3_arraylen(vec));
@@ -3845,11 +3849,28 @@ void test_nghttp3_conn_update_ack_offset(void) {
 
   assert_int(0, ==, rv);
 
+  /* Make sure that we do not call acked_data with 0 length for an
+     alien buffer. */
+  ack_offset += vec[0].len;
+
+  ud.ack.ncalled = 0;
+
+  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_offset);
+
+  assert_int(0, ==, rv);
+  assert_size(0, ==, ud.ack.ncalled);
+
+  /* Check with the same offset. */
+  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_offset);
+
+  assert_int(0, ==, rv);
+  assert_size(0, ==, ud.ack.ncalled);
+
   /* Calling the function with smaller offset is an error. */
-  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_total - 1);
+  rv = nghttp3_conn_update_ack_offset(conn, 0, ack_offset - 1);
 
   assert_int(NGHTTP3_ERR_INVALID_ARGUMENT, ==, rv);
-  assert_uint64(ack_total, ==, stream->ack_total);
+  assert_uint64(ack_offset, ==, stream->ack_offset);
 
   nghttp3_conn_del(conn);
 }
