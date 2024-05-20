@@ -63,12 +63,8 @@ foreach(_build_type "Release" "MinSizeRel" "RelWithDebInfo")
   endforeach()
 endforeach()
 
-find_package(CUnit 2.1)
 enable_testing()
-set(HAVE_CUNIT      ${CUNIT_FOUND})
-if(HAVE_CUNIT)
-  add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
-endif()
+add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
 
 # Checks for header files.
 include(CheckIncludeFile)
@@ -118,6 +114,31 @@ else()
 
   include(cmake/PickyWarningsC.cmake)
   include(cmake/PickyWarningsCXX.cmake)
+
+  if(ENABLE_ASAN)
+    include(CMakePushCheckState)
+    include(CheckCCompilerFlag)
+    cmake_push_check_state()
+    set(CMAKE_REQUIRED_LIBRARIES "-fsanitize=address")
+    check_c_compiler_flag(-fsanitize=address C__fsanitize_address_VALID)
+    check_cxx_compiler_flag(-fsanitize=address CXX__fsanitize_address_VALID)
+    cmake_pop_check_state()
+    if(NOT C__fsanitize_address_VALID OR NOT CXX__fsanitize_address_VALID)
+      message(WARNING "ENABLE_ASAN was requested, but not supported!")
+    else()
+      set(CMAKE_C_FLAGS "-fsanitize=address ${CMAKE_C_FLAGS}")
+      set(CMAKE_CXX_FLAGS "-fsanitize=address ${CMAKE_CXX_FLAGS}")
+    endif()
+  endif()
+endif()
+
+if(ENABLE_STATIC_CRT)
+  foreach(lang C CXX)
+    foreach(suffix "" _DEBUG _MINSIZEREL _RELEASE _RELWITHDEBINFO)
+      set(var "CMAKE_${lang}_FLAGS${suffix}")
+      string(REPLACE "/MD" "/MT" ${var} "${${var}}")
+    endforeach()
+  endforeach()
 endif()
 
 if(ENABLE_DEBUG)
@@ -186,8 +207,6 @@ message(STATUS "summary of build options:
     Library:
       Shared:         ${ENABLE_SHARED_LIB}
       Static:         ${ENABLE_STATIC_LIB}
-    Test:
-      CUnit:          ${HAVE_CUNIT} (LIBS='${CUNIT_LIBRARIES}')
     Library only:     ${ENABLE_LIB_ONLY}
     Examples:         ${ENABLE_EXAMPLES}
 ")
