@@ -9,13 +9,27 @@
 #include <memory>
 #include <string>
 
+#include <fuzzer/FuzzedDataProvider.h>
+
 #include <nghttp3/nghttp3.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif // defined(__cplusplus)
+
+#include "nghttp3_macro.h"
+
+#ifdef __cplusplus
+}
+#endif // defined(__cplusplus)
 
 #define nghttp3_ntohl64(N) be64toh(N)
 
 struct Request {
   Request(int64_t stream_id, const nghttp3_buf *buf);
   ~Request();
+
+  int init(const nghttp3_mem &mem);
 
   nghttp3_buf buf;
   nghttp3_qpack_stream_context *sctx;
@@ -36,7 +50,7 @@ using Headers = std::vector<std::pair<std::string, std::string>>;
 
 class Decoder {
 public:
-  Decoder(size_t max_dtable_size, size_t max_blocked);
+  Decoder(size_t max_dtable_size, size_t max_blocked, const nghttp3_mem &mem);
   ~Decoder();
 
   int init();
@@ -47,7 +61,7 @@ public:
   size_t get_num_blocked() const;
 
 private:
-  const nghttp3_mem *mem_;
+  const nghttp3_mem &mem_;
   nghttp3_qpack_decoder *dec_;
   std::priority_queue<std::shared_ptr<Request>,
                       std::vector<std::shared_ptr<Request>>,
@@ -58,15 +72,22 @@ private:
 };
 
 Request::Request(int64_t stream_id, const nghttp3_buf *buf)
-  : buf(*buf), stream_id(stream_id) {
-  auto mem = nghttp3_mem_default();
-  nghttp3_qpack_stream_context_new(&sctx, stream_id, mem);
+  : buf(*buf), sctx(nullptr), stream_id(stream_id) {}
+
+int Request::init(const nghttp3_mem &mem) {
+  auto rv = nghttp3_qpack_stream_context_new(&sctx, stream_id, &mem);
+  if (rv != 0) {
+    return -1;
+  }
+
+  return 0;
 }
 
 Request::~Request() { nghttp3_qpack_stream_context_del(sctx); }
 
-Decoder::Decoder(size_t max_dtable_size, size_t max_blocked)
-  : mem_(nghttp3_mem_default()),
+Decoder::Decoder(size_t max_dtable_size, size_t max_blocked,
+                 const nghttp3_mem &mem)
+  : mem_(mem),
     dec_(nullptr),
     max_dtable_size_(max_dtable_size),
     max_blocked_(max_blocked) {}
@@ -75,7 +96,7 @@ Decoder::~Decoder() { nghttp3_qpack_decoder_del(dec_); }
 
 int Decoder::init() {
   if (auto rv =
-        nghttp3_qpack_decoder_new(&dec_, max_dtable_size_, max_blocked_, mem_);
+        nghttp3_qpack_decoder_new(&dec_, max_dtable_size_, max_blocked_, &mem_);
       rv != 0) {
     return -1;
   }
@@ -100,6 +121,10 @@ int Decoder::read_encoder(nghttp3_buf *buf) {
 std::tuple<Headers, int> Decoder::read_request(nghttp3_buf *buf,
                                                int64_t stream_id) {
   auto req = std::make_shared<Request>(stream_id, buf);
+
+  if (req->init(mem_) != 0) {
+    return {{}, -1};
+  }
 
   auto [headers, rv] = read_request(*req);
   if (rv == -1) {
@@ -170,47 +195,70 @@ std::tuple<int64_t, Headers, int> Decoder::process_blocked() {
   return {-1, {}, 0};
 }
 
-size_t Decoder::get_num_blocked() const { return blocked_reqs_.size(); }
+namespace {
+void *fuzzed_malloc(size_t size, void *user_data) {
+  auto fuzzed_data_provider = static_cast<FuzzedDataProvider *>(user_data);
+
+  return fuzzed_data_provider->ConsumeBool() ? nullptr : malloc(size);
+}
+} // namespace
+
+namespace {
+void *fuzzed_calloc(size_t nmemb, size_t size, void *user_data) {
+  auto fuzzed_data_provider = static_cast<FuzzedDataProvider *>(user_data);
+
+  return fuzzed_data_provider->ConsumeBool() ? nullptr : calloc(nmemb, size);
+}
+} // namespace
+
+namespace {
+void *fuzzed_realloc(void *ptr, size_t size, void *user_data) {
+  auto fuzzed_data_provider = static_cast<FuzzedDataProvider *>(user_data);
+
+  return fuzzed_data_provider->ConsumeBool() ? nullptr : realloc(ptr, size);
+}
+} // namespace
 
 int decode(const uint8_t *data, size_t datalen) {
-  auto dec = Decoder(256, 100);
+  FuzzedDataProvider fuzzed_data_provider(data, datalen);
+
+  auto mem = *nghttp3_mem_default();
+  mem.user_data = &fuzzed_data_provider;
+  mem.malloc = fuzzed_malloc;
+  mem.calloc = fuzzed_calloc;
+  mem.realloc = fuzzed_realloc;
+
+  auto max_dtable_size =
+    fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, NGHTTP3_MAX_VARINT);
+  auto max_blocked =
+    fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, NGHTTP3_MAX_VARINT);
+
+  auto dec = Decoder(max_dtable_size, max_blocked, mem);
   if (auto rv = dec.init(); rv != 0) {
     return rv;
   }
 
-  for (auto p = data, end = data + datalen; p != end;) {
-    int64_t stream_id;
-    uint32_t size;
+  const auto encoder_stream_id =
+    fuzzed_data_provider.ConsumeIntegralInRange<int64_t>(0, NGHTTP3_MAX_VARINT);
 
-    if (static_cast<size_t>(end - p) < sizeof(stream_id) + sizeof(size)) {
-      return -1;
-    }
+  for (; fuzzed_data_provider.remaining_bytes();) {
+    auto stream_id = fuzzed_data_provider.ConsumeIntegralInRange<int64_t>(
+      0, NGHTTP3_MAX_VARINT);
+    auto chunk_size = fuzzed_data_provider.ConsumeIntegral<size_t>();
+    auto chunk = fuzzed_data_provider.ConsumeBytes<uint8_t>(chunk_size);
 
-    memcpy(&stream_id, p, sizeof(stream_id));
-    stream_id = nghttp3_ntohl64(stream_id);
-    p += sizeof(stream_id);
+    nghttp3_buf buf{
+      .begin = chunk.data(),
+      .end = chunk.data() + chunk.size(),
+    };
 
-    memcpy(&size, p, sizeof(size));
-    size = ntohl(size);
-    p += sizeof(size);
-
-    if ((size_t)(end - p) < size) {
-      return -1;
-    }
-
-    nghttp3_buf buf;
-    buf.begin = buf.pos = const_cast<uint8_t *>(p);
-    buf.end = buf.last = const_cast<uint8_t *>(p) + size;
-
-    p += size;
-
-    if (stream_id == 0) {
+    if (stream_id == encoder_stream_id) {
       if (auto rv = dec.read_encoder(&buf); rv != 0) {
         return rv;
       }
 
       for (;;) {
-        auto [stream_id, headers, rv] = dec.process_blocked();
+        auto [stream_id, _, rv] = dec.process_blocked();
         if (rv != 0) {
           return rv;
         }
@@ -218,27 +266,15 @@ int decode(const uint8_t *data, size_t datalen) {
         if (stream_id == -1) {
           break;
         }
-
-        (void)headers;
       }
 
       continue;
     }
 
-    auto [headers, rv] = dec.read_request(&buf, stream_id);
+    auto [_, rv] = dec.read_request(&buf, stream_id);
     if (rv == -1) {
       return rv;
     }
-    if (rv == 1) {
-      // Stream blocked
-      continue;
-    }
-
-    (void)headers;
-  }
-
-  if (auto n = dec.get_num_blocked(); n) {
-    return -1;
   }
 
   return 0;
