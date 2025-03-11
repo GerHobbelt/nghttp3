@@ -239,6 +239,11 @@ static int conn_new(nghttp3_conn **pconn, int server, int callbacks_version,
   (void)callbacks_version;
   (void)settings_version;
 
+  assert(settings->max_field_section_size <= NGHTTP3_VARINT_MAX);
+  assert(settings->qpack_max_dtable_capacity <= NGHTTP3_VARINT_MAX);
+  assert(settings->qpack_encoder_max_dtable_capacity <= NGHTTP3_VARINT_MAX);
+  assert(settings->qpack_blocked_streams <= NGHTTP3_VARINT_MAX);
+
   if (mem == NULL) {
     mem = nghttp3_mem_default();
   }
@@ -434,6 +439,10 @@ nghttp3_ssize nghttp3_conn_read_stream(nghttp3_conn *conn, int64_t stream_id,
             return rv;
           }
         }
+      } else if(!nghttp3_stream_uni(stream_id)) {
+        /* server does not expect to receive new server initiated
+           bidirectional stream from client. */
+        return NGHTTP3_ERR_H3_STREAM_CREATION_ERROR;
       } else {
         /* unidirectional stream */
         if (srclen == 0 && fin) {
@@ -1836,7 +1845,7 @@ int nghttp3_conn_create_stream(nghttp3_conn *conn, nghttp3_stream **pstream,
   nghttp3_stream *stream;
   int rv;
   nghttp3_stream_callbacks callbacks = {
-    conn_stream_acked_data,
+    .acked_data = conn_stream_acked_data,
   };
 
   rv = nghttp3_stream_new(&stream, stream_id, &callbacks,
