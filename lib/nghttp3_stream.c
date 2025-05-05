@@ -913,7 +913,6 @@ static void stream_pop_outq_entry(nghttp3_stream *stream,
 int nghttp3_stream_update_ack_offset(nghttp3_stream *stream, uint64_t offset) {
   nghttp3_ringbuf *outq = &stream->outq;
   size_t buflen;
-  size_t npopped = 0;
   uint64_t nack;
   nghttp3_typed_buf *tbuf;
   int rv;
@@ -935,14 +934,13 @@ int nghttp3_stream_update_ack_offset(nghttp3_stream *stream, uint64_t offset) {
       }
     }
 
-    if (offset >= stream->ack_base + buflen) {
+    if (stream->outq_idx > 0 && offset >= stream->ack_base + buflen) {
       stream_pop_outq_entry(stream, tbuf);
 
       stream->ack_base += buflen;
       stream->ack_offset = stream->ack_base;
-      ++npopped;
 
-      assert(stream->outq_idx >= npopped);
+      --stream->outq_idx;
 
       continue;
     }
@@ -950,9 +948,6 @@ int nghttp3_stream_update_ack_offset(nghttp3_stream *stream, uint64_t offset) {
     break;
   }
 
-  assert(stream->outq_idx >= npopped);
-
-  stream->outq_idx -= npopped;
   stream->ack_offset = offset;
 
   return 0;
@@ -1024,19 +1019,17 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
 
   switch (stream->rx.hstate) {
   case NGHTTP3_HTTP_STATE_NONE:
-    return NGHTTP3_ERR_H3_INTERNAL_ERROR;
+    nghttp3_unreachable();
   case NGHTTP3_HTTP_STATE_REQ_INITIAL:
-    switch (event) {
-    case NGHTTP3_HTTP_EVENT_HEADERS_BEGIN:
-      stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_HEADERS_BEGIN;
-      return 0;
-    default:
+    if (event != NGHTTP3_HTTP_EVENT_HEADERS_BEGIN) {
       return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
     }
+
+    stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_HEADERS_BEGIN;
+
+    return 0;
   case NGHTTP3_HTTP_STATE_REQ_HEADERS_BEGIN:
-    if (event != NGHTTP3_HTTP_EVENT_HEADERS_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
-    }
+    assert(NGHTTP3_HTTP_EVENT_HEADERS_END == event);
     stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_HEADERS_END;
     return 0;
   case NGHTTP3_HTTP_STATE_REQ_HEADERS_END:
@@ -1059,12 +1052,10 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
       stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_END;
       return 0;
     default:
-      return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
+      nghttp3_unreachable();
     }
   case NGHTTP3_HTTP_STATE_REQ_DATA_BEGIN:
-    if (event != NGHTTP3_HTTP_EVENT_DATA_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
-    }
+    assert(NGHTTP3_HTTP_EVENT_DATA_END == event);
     stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_DATA_END;
     return 0;
   case NGHTTP3_HTTP_STATE_REQ_DATA_END:
@@ -1087,12 +1078,10 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
       stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_END;
       return 0;
     default:
-      return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
+      nghttp3_unreachable();
     }
   case NGHTTP3_HTTP_STATE_REQ_TRAILERS_BEGIN:
-    if (event != NGHTTP3_HTTP_EVENT_HEADERS_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
-    }
+    assert(NGHTTP3_HTTP_EVENT_HEADERS_END == event);
     stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_TRAILERS_END;
     return 0;
   case NGHTTP3_HTTP_STATE_REQ_TRAILERS_END:
@@ -1108,7 +1097,7 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
     stream->rx.hstate = NGHTTP3_HTTP_STATE_REQ_END;
     return 0;
   case NGHTTP3_HTTP_STATE_REQ_END:
-    return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
+    nghttp3_unreachable();
   case NGHTTP3_HTTP_STATE_RESP_INITIAL:
     if (event != NGHTTP3_HTTP_EVENT_HEADERS_BEGIN) {
       return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
@@ -1116,9 +1105,7 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
     stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_HEADERS_BEGIN;
     return 0;
   case NGHTTP3_HTTP_STATE_RESP_HEADERS_BEGIN:
-    if (event != NGHTTP3_HTTP_EVENT_HEADERS_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
-    }
+    assert(NGHTTP3_HTTP_EVENT_HEADERS_END == event);
     stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_HEADERS_END;
     return 0;
   case NGHTTP3_HTTP_STATE_RESP_HEADERS_END:
@@ -1148,12 +1135,10 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
       stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_END;
       return 0;
     default:
-      return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
+      nghttp3_unreachable();
     }
   case NGHTTP3_HTTP_STATE_RESP_DATA_BEGIN:
-    if (event != NGHTTP3_HTTP_EVENT_DATA_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
-    }
+    assert(NGHTTP3_HTTP_EVENT_DATA_END == event);
     stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_DATA_END;
     return 0;
   case NGHTTP3_HTTP_STATE_RESP_DATA_END:
@@ -1176,17 +1161,15 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
       stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_END;
       return 0;
     default:
-      return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
+      nghttp3_unreachable();
     }
   case NGHTTP3_HTTP_STATE_RESP_TRAILERS_BEGIN:
-    if (event != NGHTTP3_HTTP_EVENT_HEADERS_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
-    }
+    assert(NGHTTP3_HTTP_EVENT_HEADERS_END == event);
     stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_TRAILERS_END;
     return 0;
   case NGHTTP3_HTTP_STATE_RESP_TRAILERS_END:
     if (event != NGHTTP3_HTTP_EVENT_MSG_END) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
+      return NGHTTP3_ERR_H3_FRAME_UNEXPECTED;
     }
     rv = nghttp3_http_on_remote_end_stream(stream);
     if (rv != 0) {
@@ -1195,7 +1178,7 @@ int nghttp3_stream_transit_rx_http_state(nghttp3_stream *stream,
     stream->rx.hstate = NGHTTP3_HTTP_STATE_RESP_END;
     return 0;
   case NGHTTP3_HTTP_STATE_RESP_END:
-    return NGHTTP3_ERR_MALFORMED_HTTP_MESSAGING;
+    nghttp3_unreachable();
   default:
     nghttp3_unreachable();
   }
