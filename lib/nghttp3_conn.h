@@ -88,6 +88,7 @@ struct nghttp3_conn {
     nghttp3_pq spq;
   } sched[NGHTTP3_URGENCY_LEVELS];
   const nghttp3_mem *mem;
+  nghttp3_tstamp ts;
   void *user_data;
   int server;
   uint16_t flags;
@@ -215,6 +216,9 @@ int nghttp3_conn_qpack_blocked_streams_push(nghttp3_conn *conn,
                                             nghttp3_stream *stream);
 
 void nghttp3_conn_qpack_blocked_streams_pop(nghttp3_conn *conn);
+
+void nghttp3_conn_qpack_blocked_streams_remove(nghttp3_conn *conn,
+                                               nghttp3_stream *stream);
 
 int nghttp3_conn_schedule_stream(nghttp3_conn *conn, nghttp3_stream *stream);
 
