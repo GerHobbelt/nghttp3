@@ -207,16 +207,12 @@ static int conn_call_recv_settings(nghttp3_conn *conn) {
 
 static int conn_call_recv_origin(nghttp3_conn *conn, const uint8_t *origin,
                                  size_t originlen) {
-  const nghttp3_cvec cv = {
-    .base = origin,
-    .len = originlen,
-  };
-
   if (!conn->callbacks.recv_origin) {
     return 0;
   }
 
-  if (conn->callbacks.recv_origin(conn, &cv, conn->user_data) != 0) {
+  if (conn->callbacks.recv_origin(conn, origin, originlen, conn->user_data) !=
+      0) {
     return NGHTTP3_ERR_CALLBACK_FAILURE;
   }
 
@@ -264,6 +260,7 @@ static int conn_new(nghttp3_conn **pconn, int server, int callbacks_version,
   nghttp3_conn *conn;
   nghttp3_settings settings_latest;
   nghttp3_callbacks callbacks_latest;
+  uint64_t map_seed;
   size_t i;
   (void)callbacks_version;
 
@@ -290,13 +287,19 @@ static int conn_new(nghttp3_conn **pconn, int server, int callbacks_version,
                         NGHTTP3_STREAM_MIN_CHUNK_SIZE * 16, mem);
   nghttp3_objalloc_stream_init(&conn->stream_objalloc, 8, mem);
 
-  nghttp3_map_init(&conn->streams, mem);
+  if (callbacks->rand) {
+    callbacks->rand((uint8_t *)&map_seed, sizeof(map_seed));
+  } else {
+    map_seed = 0;
+  }
+
+  nghttp3_map_init(&conn->streams, map_seed, mem);
 
   nghttp3_qpack_decoder_init(&conn->qdec, settings->qpack_max_dtable_capacity,
                              settings->qpack_blocked_streams, mem);
 
-  nghttp3_qpack_encoder_init(&conn->qenc,
-                             settings->qpack_encoder_max_dtable_capacity, mem);
+  nghttp3_qpack_encoder_init(
+    &conn->qenc, settings->qpack_encoder_max_dtable_capacity, ++map_seed, mem);
 
   nghttp3_pq_init(&conn->qpack_blocked_streams, ricnt_less, mem);
 
@@ -1573,10 +1576,6 @@ nghttp3_ssize nghttp3_conn_read_bidi(nghttp3_conn *conn, size_t *pnproc,
       nread = nghttp3_conn_on_headers(conn, stream, p, len,
                                       (int64_t)len == rstate->left);
       if (nread < 0) {
-        if (nread == NGHTTP3_ERR_MALFORMED_HTTP_HEADER) {
-          goto http_header_error;
-        }
-
         return nread;
       }
 
@@ -1615,10 +1614,6 @@ nghttp3_ssize nghttp3_conn_read_bidi(nghttp3_conn *conn, size_t *pnproc,
       }
 
       if (rv != 0) {
-        if (rv == NGHTTP3_ERR_MALFORMED_HTTP_HEADER) {
-          goto http_header_error;
-        }
-
         return rv;
       }
 
@@ -1656,24 +1651,6 @@ nghttp3_ssize nghttp3_conn_read_bidi(nghttp3_conn *conn, size_t *pnproc,
       assert(0 == rv);
 
       nghttp3_stream_read_state_reset(rstate);
-
-      break;
-
-    http_header_error:
-      stream->flags |= NGHTTP3_STREAM_FLAG_HTTP_ERROR;
-
-      busy = 1;
-      rstate->state = NGHTTP3_REQ_STREAM_STATE_IGN_REST;
-
-      rv = conn_call_stop_sending(conn, stream, NGHTTP3_H3_MESSAGE_ERROR);
-      if (rv != 0) {
-        return rv;
-      }
-
-      rv = conn_call_reset_stream(conn, stream, NGHTTP3_H3_MESSAGE_ERROR);
-      if (rv != 0) {
-        return rv;
-      }
 
       break;
     case NGHTTP3_REQ_STREAM_STATE_IGN_FRAME:
