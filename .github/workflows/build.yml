@@ -4,25 +4,32 @@ on: [push, pull_request]
 
 permissions: read-all
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
     strategy:
       matrix:
         os: [ubuntu-24.04, macos-14, macos-15]
         compiler: [gcc, clang]
-        buildtool: [autotools, distcheck, cmake]
-        exclude:
-        - os: macos-14
+        buildtool: [autotools, cmake]
+        include:
+        - os: ubuntu-24.04
+          compiler: clang
           buildtool: distcheck
-        - os: macos-15
-          buildtool: distcheck
-        - compiler: gcc
-          buildtool: distcheck
+        - os: ubuntu-24.04-arm
+          compiler: gcc
+          buildtool: autotools
+        - os: ubuntu-24.04-arm
+          compiler: clang
+          buildtool: autotools
 
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Linux setup
       if: runner.os == 'Linux'
       run: |
@@ -116,7 +123,7 @@ jobs:
       HOST: ${{ matrix.host }}
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Prepare for i386
       if: matrix.host == 'i686-w64-mingw32'
       run: |
@@ -162,7 +169,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Configure cmake
       run: |
         git submodule update --init --depth 1
@@ -188,7 +195,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
         submodules: recursive

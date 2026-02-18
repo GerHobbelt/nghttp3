@@ -89,6 +89,7 @@ typedef struct nghttp3_varint_read_state {
 
 typedef struct nghttp3_stream_read_state {
   nghttp3_varint_read_state rvint;
+  nghttp3_settings_entry iv;
   nghttp3_frame fr;
   int64_t left;
   int state;
@@ -131,7 +132,6 @@ typedef struct nghttp3_stream_read_state {
 typedef enum nghttp3_stream_http_state {
   NGHTTP3_HTTP_STATE_NONE,
   NGHTTP3_HTTP_STATE_REQ_INITIAL,
-  NGHTTP3_HTTP_STATE_REQ_BEGIN,
   NGHTTP3_HTTP_STATE_REQ_HEADERS_BEGIN,
   NGHTTP3_HTTP_STATE_REQ_HEADERS_END,
   NGHTTP3_HTTP_STATE_REQ_DATA_BEGIN,
@@ -140,7 +140,6 @@ typedef enum nghttp3_stream_http_state {
   NGHTTP3_HTTP_STATE_REQ_TRAILERS_END,
   NGHTTP3_HTTP_STATE_REQ_END,
   NGHTTP3_HTTP_STATE_RESP_INITIAL,
-  NGHTTP3_HTTP_STATE_RESP_BEGIN,
   NGHTTP3_HTTP_STATE_RESP_HEADERS_BEGIN,
   NGHTTP3_HTTP_STATE_RESP_HEADERS_END,
   NGHTTP3_HTTP_STATE_RESP_DATA_BEGIN,
