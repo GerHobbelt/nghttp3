@@ -230,7 +230,6 @@ struct nghttp3_stream {
 
       struct {
         uint64_t offset;
-        nghttp3_stream_http_state hstate;
       } tx;
 
       struct {
@@ -246,18 +245,6 @@ struct nghttp3_stream {
 };
 
 nghttp3_objalloc_decl(stream, nghttp3_stream, oplent)
-
-typedef struct nghttp3_frame_entry {
-  nghttp3_frame fr;
-  union {
-    struct {
-      nghttp3_settings *local_settings;
-    } settings;
-    struct {
-      nghttp3_data_reader dr;
-    } data;
-  } aux;
-} nghttp3_frame_entry;
 
 int nghttp3_stream_new(nghttp3_stream **pstream, int64_t stream_id,
                        const nghttp3_stream_callbacks *callbacks,
@@ -275,8 +262,18 @@ nghttp3_ssize nghttp3_read_varint(nghttp3_varint_read_state *rvint,
                                   const uint8_t *begin, const uint8_t *end,
                                   int fin);
 
-int nghttp3_stream_frq_add(nghttp3_stream *stream,
-                           const nghttp3_frame_entry *frent);
+/*
+ * nghttp3_stream_frq_emplace adds new space for nghttp3_frame to
+ * stream->frq, and assigns the pointer to the space to |*pfr| if it
+ * succeeds.
+ *
+ * This function returns 0 if it succeeds, or one of the following
+ * negative error codes:
+ *
+ * NGHTTP3_ERR_NOMEM
+ *   Out of memory.
+ */
+int nghttp3_stream_frq_emplace(nghttp3_stream *stream, nghttp3_frame **pfr);
 
 int nghttp3_stream_fill_outq(nghttp3_stream *stream);
 
@@ -291,7 +288,7 @@ int nghttp3_stream_outq_add(nghttp3_stream *stream,
                             const nghttp3_typed_buf *tbuf);
 
 int nghttp3_stream_write_headers(nghttp3_stream *stream,
-                                 nghttp3_frame_entry *frent);
+                                 const nghttp3_frame_headers *fr);
 
 int nghttp3_stream_write_header_block(nghttp3_stream *stream,
                                       nghttp3_qpack_encoder *qenc,
@@ -301,19 +298,19 @@ int nghttp3_stream_write_header_block(nghttp3_stream *stream,
                                       size_t nvlen);
 
 int nghttp3_stream_write_data(nghttp3_stream *stream, int *peof,
-                              nghttp3_frame_entry *frent);
+                              const nghttp3_frame_data *fr);
 
 int nghttp3_stream_write_settings(nghttp3_stream *stream,
-                                  nghttp3_frame_entry *frent);
+                                  const nghttp3_frame_settings *fr);
 
 int nghttp3_stream_write_goaway(nghttp3_stream *stream,
-                                nghttp3_frame_entry *frent);
+                                const nghttp3_frame_goaway *fr);
 
-int nghttp3_stream_write_priority_update(nghttp3_stream *stream,
-                                         nghttp3_frame_entry *frent);
+int nghttp3_stream_write_priority_update(
+  nghttp3_stream *stream, const nghttp3_frame_priority_update *fr);
 
 int nghttp3_stream_write_origin(nghttp3_stream *stream,
-                                nghttp3_frame_entry *frent);
+                                const nghttp3_frame_origin *fr);
 
 int nghttp3_stream_ensure_chunk(nghttp3_stream *stream, size_t need);
 
