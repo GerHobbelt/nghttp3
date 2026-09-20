@@ -12,17 +12,17 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-26, macos-15]
+        os: [ubuntu-26.04, macos-26, macos-15]
         compiler: [gcc, clang]
         buildtool: [autotools, cmake]
         include:
-        - os: ubuntu-24.04
+        - os: ubuntu-26.04
           compiler: clang
           buildtool: distcheck
-        - os: ubuntu-24.04-arm
+        - os: ubuntu-26.04-arm
           compiler: gcc
           buildtool: autotools
-        - os: ubuntu-24.04-arm
+        - os: ubuntu-26.04-arm
           compiler: clang
           buildtool: autotools
 
@@ -124,13 +124,23 @@ jobs:
       if: matrix.buildtool == 'distcheck'
       run: |
         make distcheck
+    - name: Build fuzzer
+      if: runner.os == 'Linux' && matrix.buildtool == 'autotools' && matrix.compiler == 'clang'
+      run: |
+        export CXXFLAGS="-fsanitize=address,fuzzer"
+        export LIB_FUZZING_ENGINE=
+        export OUT=fuzz-out
+
+        mkdir $OUT
+
+        .clusterfuzzlite/build_fuzzer.sh
 
   build-cross:
     strategy:
       matrix:
         host: [x86_64-w64-mingw32, i686-w64-mingw32]
 
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     env:
       HOST: ${{ matrix.host }}
@@ -208,7 +218,7 @@ jobs:
     permissions:
       contents: write
 
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     steps:
     - uses: actions/checkout@v7
