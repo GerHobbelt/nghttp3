@@ -67,11 +67,11 @@
 #    define nghttp3_htonl64(N) (N)
 #  else /* !defined(WORDS_BIGENDIAN) */
 #    if HAVE_DECL_BSWAP_64
-#      define nghttp3_bswap64 bswap_64
+#      define nghttp3_bswap64(N) bswap_64(N)
 #    elif defined(WIN32)
-#      define nghttp3_bswap64 _byteswap_uint64
+#      define nghttp3_bswap64(N) _byteswap_uint64(N)
 #    elif defined(__APPLE__)
-#      define nghttp3_bswap64 OSSwapInt64
+#      define nghttp3_bswap64(N) OSSwapInt64(N)
 #    else /* !(HAVE_DECL_BSWAP_64 || defined(WIN32) || defined(__APPLE__)) */
 #      define nghttp3_bswap64(N)                                               \
         ((uint64_t)(ntohl((uint32_t)(N))) << 32 | ntohl((uint32_t)((N) >> 32)))
@@ -82,52 +82,14 @@
 #endif   /* !HAVE_DECL_BE64TOH */
 
 #ifdef WIN32
-/* Windows requires ws2_32 library for ntonl family of functions.  We
-   define inline functions for those functions so that we don't have
-   dependency on that lib. */
-
-#  ifdef _MSC_VER
-#    define STIN static __inline
-#  else /* !defined(_MSC_VER) */
-#    define STIN static inline
-#  endif /* !defined(_MSC_VER) */
-
-STIN uint32_t htonl(uint32_t hostlong) {
-  uint32_t res;
-  unsigned char *p = (unsigned char *)&res;
-  *p++ = (unsigned char)(hostlong >> 24);
-  *p++ = (hostlong >> 16) & 0xFFU;
-  *p++ = (hostlong >> 8) & 0xFFU;
-  *p = hostlong & 0xFFU;
-  return res;
-}
-
-STIN uint16_t htons(uint16_t hostshort) {
-  uint16_t res;
-  unsigned char *p = (unsigned char *)&res;
-  *p++ = (unsigned char)(hostshort >> 8);
-  *p = hostshort & 0xFFU;
-  return res;
-}
-
-STIN uint32_t ntohl(uint32_t netlong) {
-  uint32_t res;
-  unsigned char *p = (unsigned char *)&netlong;
-  res = (uint32_t)(*p++ << 24);
-  res += (uint32_t)(*p++ << 16);
-  res += (uint32_t)(*p++ << 8);
-  res += *p;
-  return res;
-}
-
-STIN uint16_t ntohs(uint16_t netshort) {
-  uint16_t res;
-  unsigned char *p = (unsigned char *)&netshort;
-  res = (uint16_t)(*p++ << 8);
-  res += *p;
-  return res;
-}
-
+/* Windows requires ws2_32 library for ntonl family of functions.
+   Instead of using them, use _byteswap_* functions.  This is fine
+   because all platforms that can run Windows these days are little
+   endian. */
+#  define htonl(N) _byteswap_ulong(N)
+#  define htons(N) _byteswap_ushort(N)
+#  define ntohl(N) _byteswap_ulong(N)
+#  define ntohs(N) _byteswap_ushort(N)
 #endif /* defined(WIN32) */
 
 /*
@@ -192,30 +154,8 @@ uint8_t *nghttp3_put_uvarint(uint8_t *p, uint64_t n);
 size_t nghttp3_put_uvarintlen(uint64_t n);
 
 /*
- * nghttp3_put_varint writes |n| in |p| using variable-length integer
- * encoding.  It returns the one beyond of the last written position.
- */
-static inline uint8_t *nghttp3_put_varint(uint8_t *p, int64_t n) {
-  return nghttp3_put_uvarint(p, (uint64_t)n);
-}
-
-/*
- * nghttp3_put_varintlen returns the required number of bytes to
- * encode |n|.
- */
-static inline size_t nghttp3_put_varintlen(int64_t n) {
-  return nghttp3_put_uvarintlen((uint64_t)n);
-}
-
-/*
  * nghttp3_ord_stream_id returns the ordinal number of |stream_id|.
  */
 uint64_t nghttp3_ord_stream_id(int64_t stream_id);
-
-/*
- * NGHTTP3_PRI_INC_MASK is a bit mask to retrieve incremental bit from
- * a value produced by nghttp3_pri_to_uint8.
- */
-#define NGHTTP3_PRI_INC_MASK (1 << 7)
 
 #endif /* !defined(NGHTTP3_CONV_H) */
