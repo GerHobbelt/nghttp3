@@ -73,6 +73,7 @@ static const MunitTest tests[] = {
   munit_void_test(test_nghttp3_conn_recv_origin),
   munit_void_test(test_nghttp3_conn_write_origin),
   munit_void_test(test_nghttp3_conn_recv_unknown_frame),
+  munit_void_test(test_nghttp3_conn_get_stream_user_data),
   munit_test_end(),
 };
 
@@ -5431,7 +5432,7 @@ void test_nghttp3_conn_get_frame_payload_left(void) {
   /* Control stream */
   setup_default_server(&conn);
 
-  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left(conn, 2));
+  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left2(conn, 2));
 
   buf.last = nghttp3_put_varint(buf.last, NGHTTP3_STREAM_TYPE_CONTROL);
 
@@ -5461,20 +5462,20 @@ void test_nghttp3_conn_get_frame_payload_left(void) {
 
   assert_ptrdiff(3, ==, nconsumed);
   assert_uint64(nghttp3_buf_len(&buf) - 3, ==,
-                nghttp3_conn_get_frame_payload_left(conn, 2));
+                nghttp3_conn_get_frame_payload_left2(conn, 2));
 
   nconsumed =
     nghttp3_conn_read_stream2(conn, 2, buf.pos + 3, 14, /* fin = */ 0, 0);
 
   assert_ptrdiff(14, ==, nconsumed);
   assert_uint64(nghttp3_buf_len(&buf) - 17, ==,
-                nghttp3_conn_get_frame_payload_left(conn, 2));
+                nghttp3_conn_get_frame_payload_left2(conn, 2));
 
   nconsumed =
     nghttp3_conn_read_stream2(conn, 2, buf.pos + 17, 1, /* fin = */ 0, 0);
 
   assert_ptrdiff(1, ==, nconsumed);
-  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left(conn, 2));
+  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left2(conn, 2));
 
   nghttp3_conn_del(conn);
 
@@ -5482,7 +5483,7 @@ void test_nghttp3_conn_get_frame_payload_left(void) {
   nghttp3_buf_reset(&buf);
   setup_default_server(&conn);
 
-  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left(conn, 0));
+  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left2(conn, 0));
 
   nghttp3_qpack_encoder_init(&qenc, 0, NGHTTP3_TEST_MAP_SEED, mem);
 
@@ -5497,14 +5498,14 @@ void test_nghttp3_conn_get_frame_payload_left(void) {
   nconsumed = nghttp3_conn_read_stream2(conn, 0, buf.pos, 1, /* fin = */ 0, 0);
 
   assert_ptrdiff(1, ==, nconsumed);
-  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left(conn, 0));
+  assert_uint64(0, ==, nghttp3_conn_get_frame_payload_left2(conn, 0));
 
   nconsumed =
     nghttp3_conn_read_stream2(conn, 0, buf.pos + 1, 1, /* fin = */ 0, 0);
 
   assert_ptrdiff(1, ==, nconsumed);
   assert_uint64(nghttp3_buf_len(&buf) - 2, ==,
-                nghttp3_conn_get_frame_payload_left(conn, 0));
+                nghttp3_conn_get_frame_payload_left2(conn, 0));
 
   nghttp3_qpack_encoder_free(&qenc);
   nghttp3_conn_del(conn);
@@ -6721,6 +6722,37 @@ void test_nghttp3_conn_recv_unknown_frame(void) {
                                         /* fin = */ 0, 0);
 
   assert_ptrdiff(NGHTTP3_ERR_H3_EXCESSIVE_LOAD, ==, nconsumed);
+
+  nghttp3_conn_del(conn);
+}
+
+void test_nghttp3_conn_get_stream_user_data(void) {
+  nghttp3_conn *conn;
+  int64_t stream_user_data = 0;
+  int rv;
+
+  setup_default_client(&conn);
+  conn_write_initial_streams(conn);
+
+  rv = nghttp3_conn_submit_request(conn, 0, req_nva, nghttp3_arraylen(req_nva),
+                                   NULL, &stream_user_data);
+
+  assert_int(0, ==, rv);
+  assert_ptr_equal(&stream_user_data,
+                   nghttp3_conn_get_stream_user_data(conn, 0));
+
+  rv = nghttp3_conn_set_stream_user_data(conn, 0, NULL);
+
+  assert_int(0, ==, rv);
+  assert_null(nghttp3_conn_get_stream_user_data(conn, 0));
+
+  rv = nghttp3_conn_set_stream_user_data(conn, 0, &stream_user_data);
+
+  assert_int(0, ==, rv);
+  assert_ptr_equal(&stream_user_data,
+                   nghttp3_conn_get_stream_user_data(conn, 0));
+
+  assert_null(nghttp3_conn_get_stream_user_data(conn, 100));
 
   nghttp3_conn_del(conn);
 }
