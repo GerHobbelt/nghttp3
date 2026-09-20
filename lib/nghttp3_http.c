@@ -577,10 +577,13 @@ int nghttp3_http_on_request_headers(nghttp3_http_state *http) {
          (NGHTTP3_HTTP_FLAG__AUTHORITY | NGHTTP3_HTTP_FLAG_HOST)) == 0) {
       return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
     }
-    if ((http->flags & NGHTTP3_HTTP_FLAG__PROTOCOL) &&
-        ((http->flags & NGHTTP3_HTTP_FLAG_METH_CONNECT) == 0 ||
-         (http->flags & NGHTTP3_HTTP_FLAG__AUTHORITY) == 0)) {
-      return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+    if (http->flags & NGHTTP3_HTTP_FLAG__PROTOCOL) {
+      if ((http->flags & NGHTTP3_HTTP_FLAG_METH_CONNECT) == 0 ||
+          (http->flags & NGHTTP3_HTTP_FLAG__AUTHORITY) == 0) {
+        return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+      }
+
+      http->content_length = -1;
     }
     if (!check_path_flags(http)) {
       return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
@@ -809,7 +812,7 @@ int nghttp3_check_header_value(const uint8_t *value, size_t len) {
 
 #ifdef __AVX2__
   if (len >= 32) {
-    last32 = value + (len & ~0x1FU);
+    last32 = value + (len & ~(size_t)0x1FU);
     if (contains_bad_header_value_char_avx2(value, last32)) {
       return 0;
     }
