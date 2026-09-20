@@ -2099,11 +2099,11 @@ int nghttp3_conn_create_stream(nghttp3_conn *conn, nghttp3_stream **pstream,
                                int64_t stream_id) {
   nghttp3_stream *stream;
   int rv;
+  static const nghttp3_stream_callbacks callbacks = {
+    .acked_data = conn_stream_acked_data,
+  };
 
-  rv = nghttp3_stream_new(&stream, stream_id,
-                          &(nghttp3_stream_callbacks){
-                            .acked_data = conn_stream_acked_data,
-                          },
+  rv = nghttp3_stream_new(&stream, stream_id, &callbacks,
                           &conn->out_chunk_objalloc, &conn->stream_objalloc,
                           conn->mem);
   if (rv != 0) {
@@ -2978,4 +2978,22 @@ int nghttp3_conn_is_drained2(const nghttp3_conn *conn) {
          conn->remote.bidi.num_streams == 0 &&
          nghttp3_stream_outq_write_done(conn->tx.ctrl) &&
          nghttp3_ringbuf_len(&conn->tx.ctrl->frq) == 0;
+}
+
+int nghttp3_conn_is_stream_flushed(const nghttp3_conn *conn,
+                                   int64_t stream_id) {
+  nghttp3_stream *stream = nghttp3_conn_find_stream(conn, stream_id);
+  const nghttp3_frame *fr;
+
+  if (!stream || !nghttp3_stream_outq_write_done(stream)) {
+    return 0;
+  }
+
+  if (nghttp3_ringbuf_len(&stream->frq) == 0) {
+    return 1;
+  }
+
+  fr = nghttp3_ringbuf_get(&stream->frq, 0);
+
+  return fr->hd.type == NGHTTP3_FRAME_DATA;
 }
